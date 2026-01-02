@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>UCL Monte Carlo Simülasyonu 2025/26</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body { background-color: #0e1e32; color: white; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        .card { background-color: #162b45; border: 1px solid #2c3e50; margin-bottom: 20px; }
+        .card-header { background-color: #00458f; color: white; font-weight: bold; }
+        .table { color: #e0e0e0; }
+        .table-hover tbody tr:hover { color: white; background-color: #2c3e50; }
+        .prob-high { color: #2ecc71; font-weight: bold; }
+        .prob-med { color: #f1c40f; }
+        .prob-low { color: #e74c3c; }
+        .loading { text-align: center; padding: 50px; }
+    </style>
+</head>
+<body>
+
+<div class="container py-4">
+    <div class="text-center mb-5">
+        <h1 class="display-5 fw-bold">🏆 UEFA Şampiyonlar Ligi Tahmincisi</h1>
+        <p class="lead text-info">Monte Carlo Yöntemi ile 10.000+ Simülasyon</p>
+        <button id="refreshBtn" class="btn btn-outline-light btn-sm">Verileri Güncelle ve Simüle Et</button>
+    </div>
+
+    <div id="loading" class="loading">
+        <div class="spinner-border text-light" role="status">
+            <span class="visually-hidden">Yükleniyor...</span>
+        </div>
+        <p class="mt-3">Football-Data.org API'den veriler çekiliyor ve sezon simüle ediliyor...</p>
+    </div>
+
+    <div id="content" style="display: none;">
+        <div class="row">
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header">İlk 8 (Direkt Son 16) Olasılıkları</div>
+                    <div class="card-body">
+                        <canvas id="top8Chart"></canvas>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header">Play-off (9-24. Sıra) Olasılıkları</div>
+                    <div class="card-body">
+                        <canvas id="top24Chart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="row">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header">Elenme Riski En Yüksek Takımlar</div>
+                    <div class="card-body">
+                        <canvas id="elimChart" height="100"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">Detaylı Tahmin Tablosu</div>
+            <div class="card-body table-responsive">
+                <table class="table table-hover align-middle">
+                    <thead>
+                        <tr>
+                            <th>Takım</th>
+                            <th>Mevcut Puan</th>
+                            <th>Beklenen Puan</th>
+                            <th>İlk 8 (%)</th>
+                            <th>İlk 24 (%)</th>
+                            <th>Elenme (%)</th>
+                        </tr>
+                    </thead>
+                    <tbody id="statsTable">
+                        </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    document.addEventListener("DOMContentLoaded", function() {
+        fetchData();
+
+        document.getElementById('refreshBtn').addEventListener('click', function() {
+            document.getElementById('content').style.display = 'none';
+            document.getElementById('loading').style.display = 'block';
+            fetchData();
+        });
+    });
+
+    function fetchData() {
+        fetch('/api/data')
+            .then(response => response.json())
+            .then(data => {
+                if(data.error) {
+                    alert('Hata: ' + data.error);
+                    return;
+                }
+                renderDashboard(data);
+            })
+            .catch(err => console.error('Hata:', err));
+    }
+
+    function renderDashboard(data) {
+        document.getElementById('loading').style.display = 'none';
+        document.getElementById('content').style.display = 'block';
+
+        const tableBody = document.getElementById('statsTable');
+        tableBody.innerHTML = '';
+
+        // Tabloyu Doldur
+        data.forEach(team => {
+            const row = `
+                <tr>
+                    <td class="fw-bold">${team.team}</td>
+                    <td><span class="badge bg-secondary">${team.current_points}</span> <small class="text-muted">(${team.matches_played} maç)</small></td>
+                    <td><span class="badge bg-primary">${team.avg_points}</span></td>
+                    <td class="${getColor(team.top8_prob)}">%${team.top8_prob}</td>
+                    <td class="${getColor(team.top24_prob)}">%${team.top24_prob}</td>
+                    <td class="${getInvColor(team.elim_prob)}">%${team.elim_prob}</td>
+                </tr>
+            `;
+            tableBody.innerHTML += row;
+        });
+
+        // Grafikleri Çiz
+        createChart('top8Chart', 'İlk 8 Olasılığı', data.slice(0, 15), 'top8_prob', '#2ecc71');
+        
+        // Playoff için ortadan kesit al (çok yüksekleri veya çok düşükleri filtrele)
+        const playoffData = data.filter(t => t.top24_prob > 10 && t.top24_prob < 99).slice(0, 15);
+        createChart('top24Chart', 'Play-off Olasılığı', playoffData, 'top24_prob', '#3498db');
+
+        // Elenme riski yüksek olanlar
+        const elimData = [...data].sort((a,b) => b.elim_prob - a.elim_prob).slice(0, 15);
+        createChart('elimChart', 'Elenme Riski', elimData, 'elim_prob', '#e74c3c');
+    }
+
+    function createChart(canvasId, label, dataSet, key, color) {
+        // Varsa eski grafiği yok et (Chart.js bug'ını önlemek için)
+        const canvas = document.getElementById(canvasId);
+        if(canvas.chart) canvas.chart.destroy();
+
+        const ctx = canvas.getContext('2d');
+        canvas.chart = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: dataSet.map(d => d.team),
+                datasets: [{
+                    label: label + ' (%)',
+                    data: dataSet.map(d => d[key]),
+                    backgroundColor: color,
+                    borderColor: 'rgba(255,255,255,0.1)',
+                    borderWidth: 1
+                }]
+            },
+            options: {
+                indexAxis: 'y', // Yatay bar chart
+                responsive: true,
+                plugins: {
+                    legend: { display: false }
+                },
+                scales: {
+                    x: { beginAtZero: true, max: 100, grid: { color: '#2c3e50' } },
+                    y: { grid: { display: false }, ticks: { color: '#fff' } }
+                }
+            }
+        });
+    }
+
+    function getColor(val) {
+        if(val > 70) return 'prob-high';
+        if(val > 30) return 'prob-med';
+        return 'prob-low';
+    }
+    function getInvColor(val) {
+        if(val > 70) return 'prob-low'; // Kötü (elenme yüksek)
+        if(val > 30) return 'prob-med';
+        return 'prob-high'; // İyi (elenme düşük)
+    }
+</script>
+
+</body>
+</html>
